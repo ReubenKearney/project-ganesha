@@ -130,77 +130,67 @@ with right:
         "This POC shows structure and values. Next iteration will add per-node sparklines and variances."
     )
 
-    import graphviz as gv
-    g = gv.Digraph(format='svg')
-    g.attr('node', shape='box', style='rounded,filled', color='#e5e7eb', fillcolor='#ffffff', fontname='Inter')
+    from streamlit_agraph import agraph, Node, Edge, Config
 
-    def label(title, val, unit="A$", precision=0):
+    # Build interactive nodes/edges (vis.js via streamlit_agraph)
+    nodes = []
+    edges = []
+
+    def N(id, title, val, unit="A$", precision=0):
         if unit == "%":
             v = f"{val*100:.1f}%"
         else:
             v = f"{val:,.{precision}f}" if precision else f"{val:,.0f}"
-        return f"<<b>{title}</b><br/><font point-size='18'><b>{v}</b></font>>"
+        label = f"{title}\n{v}{'' if unit=='%' else (' ' + unit if unit else '')}"
+        nodes.append(Node(id=id, label=label, shape="box", 
+                          font={"multi":"html","size":14},
+                          borderWidth=1, shadow=True))
+
+    def E(a,b):
+        edges.append(Edge(source=a, target=b, smooth=True, arrows="to"))
 
     # Nodes
-    g.node('Units', label('Units', units, unit=""))
-    g.node('ASP', label('ASP', asp))
-    g.node('Revenue', label('Revenue', revenue))
-
-    g.node('GM', label('Gross Margin %', gm_pct, unit='%'))
-    g.node('COGS', label('COGS (FX Adj)', cogs))
-
-    g.node('Labour', label('Labour', labour))
-    g.node('Overheads', label('Overheads', overheads))
-    g.node('EBITDA', label('EBITDA', ebitda))
-
-    g.node('InvDays', label('Inventory Days', inv_days, unit="days"))
-    g.node('DSO', label('DSO', dso, unit="days"))
-    g.node('DPO', label('DPO', dpo, unit="days"))
-    g.node('Inventory', label('Inventory', inventory))
-    g.node('Receivables', label('Receivables', receivables))
-    g.node('Payables', label('Payables', payables))
-
-    g.node('DeltaNWC', label('ΔNWC', change_nwc))
-    g.node('AvgDebt', label('Avg Debt', avg_debt))
-    g.node('Interest', label('Interest', interest))
-
-    g.node('Taxes', label('Taxes', taxes))
-    g.node('Capex', label('Capex', capex))
-    g.node('FCF', label('Free Cash Flow', fcf))
+    N('Units', 'Units', units, unit="")
+    N('ASP', 'ASP', asp)
+    N('Revenue', 'Revenue', revenue)
+    N('GM', 'Gross Margin %', gm_pct, unit='%')
+    N('COGS', 'COGS (FX Adj)', cogs)
+    N('Labour', 'Labour', labour)
+    N('Overheads', 'Overheads', overheads)
+    N('EBITDA', 'EBITDA', ebitda)
+    N('InvDays', 'Inventory Days', inv_days, unit="days")
+    N('DSO', 'DSO', dso, unit="days")
+    N('DPO', 'DPO', dpo, unit="days")
+    N('Inventory', 'Inventory', inventory)
+    N('Receivables', 'Receivables', receivables)
+    N('Payables', 'Payables', payables)
+    N('DeltaNWC', 'ΔNWC', change_nwc)
+    N('AvgDebt', 'Avg Debt', avg_debt)
+    N('Interest', 'Interest', interest)
+    N('Taxes', 'Taxes', taxes)
+    N('Capex', 'Capex', capex)
+    N('FCF', 'Free Cash Flow', fcf)
 
     # Edges
-    g.edges([('Units','Revenue'), ('ASP','Revenue')])
-    g.edge('Revenue','COGS')
-    g.edge('GM','COGS')
+    E('Units','Revenue'); E('ASP','Revenue')
+    E('Revenue','COGS'); E('GM','COGS')
+    E('Revenue','EBITDA'); E('GM','EBITDA'); E('Labour','EBITDA'); E('Overheads','EBITDA')
+    E('COGS','Inventory'); E('InvDays','Inventory')
+    E('Revenue','Receivables'); E('DSO','Receivables')
+    E('COGS','Payables'); E('DPO','Payables')
+    E('Inventory','DeltaNWC'); E('Receivables','DeltaNWC'); E('Payables','DeltaNWC')
+    E('DeltaNWC','AvgDebt'); E('AvgDebt','Interest')
+    E('EBITDA','FCF'); E('Taxes','FCF'); E('Capex','FCF'); E('DeltaNWC','FCF'); E('Interest','FCF')
 
-    g.edge('Revenue','EBITDA')
-    g.edge('GM','EBITDA')
-    g.edge('Labour','EBITDA')
-    g.edge('Overheads','EBITDA')
+    config = Config(width=1200, height=700, directed=True, physics=True,
+                    hierarchical=True,
+                    hierarchical_sort_method='directed',
+                    hierarchical_enabled=True,
+                    hierarchical_level_separation=140,
+                    hierarchical_node_spacing=110,
+                    hierarchical_tree_spacing=160)
 
-    g.edge('COGS','Inventory')
-    g.edge('InvDays','Inventory')
-
-    g.edge('Revenue','Receivables')
-    g.edge('DSO','Receivables')
-
-    g.edge('COGS','Payables')
-    g.edge('DPO','Payables')
-
-    g.edge('Inventory','DeltaNWC')
-    g.edge('Receivables','DeltaNWC')
-    g.edge('Payables','DeltaNWC')
-
-    g.edge('DeltaNWC','AvgDebt')
-    g.edge('AvgDebt','Interest')
-
-    g.edge('EBITDA','FCF')
-    g.edge('Taxes','FCF')
-    g.edge('Capex','FCF')
-    g.edge('DeltaNWC','FCF')
-    g.edge('Interest','FCF')
-
-    st.graphviz_chart(g, use_container_width=True)
+    agraph(nodes=nodes, edges=edges, config=config)
 
 ############################
 # 6) Dataframe Summary     #
