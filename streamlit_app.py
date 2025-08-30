@@ -107,90 +107,216 @@ def card(title: str, value: float, units: str = "A$", precision: int = 0):
     )
 
 ############################
-# 5) Layout                #
+# 5) Layout – Inline Cards + Tree (Right→Left) #
 ############################
-left, right = st.columns([2,3])
 
-with left:
-    st.subheader("Key Drivers")
-    card("Revenue", revenue)
-    card("COGS (FX Adj)", cogs)
-    card("Gross Margin %", gm_pct, units="%")
-    card("EBITDA", ebitda)
-    card("Inventory", inventory)
-    card("Receivables", receivables)
-    card("Payables", payables)
-    card("Δ NWC", change_nwc)
-    card("Interest", interest)
-    card("Free Cash Flow", fcf)
+# --- Scenario handling (Base vs Scenario) ---
+if 'base_metrics' not in st.session_state:
+    st.session_state.base_metrics = None
 
-with right:
-    st.subheader("Value Driver Tree (Structure)")
-    st.write(
-        "This POC shows structure and values. Next iteration will add per-node sparklines and variances."
-    )
+col_top1, col_top2 = st.columns([1,1])
+with col_top1:
+    set_base = st.button("Set current inputs as BASE case")
+with col_top2:
+    st.write("")
 
-    from streamlit_agraph import agraph, Node, Edge, Config
+# Calculate a dict of all key metrics for convenience
+metrics_now = {
+    'Units': units,
+    'ASP': asp,
+    'Revenue': revenue,
+    'GM%': gm_pct,
+    'COGS': cogs,
+    'Labour': labour,
+    'Overheads': overheads,
+    'EBITDA': ebitda,
+    'Inventory Days': inv_days,
+    'DSO': dso,
+    'DPO': dpo,
+    'Inventory': inventory,
+    'Receivables': receivables,
+    'Payables': payables,
+    'ΔNWC': change_nwc,
+    'Avg Debt': avg_debt,
+    'Interest': interest,
+    'Taxes': taxes,
+    'Capex': capex,
+    'FCF': fcf,
+}
 
-    # Build interactive nodes/edges (vis.js via streamlit_agraph)
-    nodes = []
-    edges = []
+if set_base or st.session_state.base_metrics is None:
+    st.session_state.base_metrics = metrics_now.copy()
+    st.toast("Base case captured from current inputs.")
 
-    def N(id, title, val, unit="A$", precision=0):
-        if unit == "%":
-            v = f"{val*100:.1f}%"
+base = st.session_state.base_metrics
+
+# --- Helpers for variance & formatting ---
+PREFER_LOWER = {  # lower-is-better nodes
+    'COGS', 'Inventory', 'Receivables', 'Payables', 'ΔNWC', 'Interest', 'Taxes', 'Capex', 'Inventory Days', 'DSO', 'DPO', 'Labour', 'Overheads'
+}
+UNITS = {
+    'Units': '', 'ASP':'A$', 'Revenue':'A$', 'GM%':'%', 'COGS':'A$', 'Labour':'A$', 'Overheads':'A$', 'EBITDA':'A$',
+    'Inventory Days':'days','DSO':'days','DPO':'days','Inventory':'A$','Receivables':'A$','Payables':'A$','ΔNWC':'A$',
+    'Avg Debt':'A$','Interest':'A$','Taxes':'A$','Capex':'A$','FCF':'A$'
+}
+
+import random
+random.seed(7)
+
+# Simple mock sparkline (12 months) using unicode blocks
+SPARK_BLOCKS = ['▁','▂','▃','▄','▅','▆','▇']
+
+def sparkline_for(val: float):
+    # create a tiny synthetic 12m series around current value
+    series = [val*(0.9+0.2*random.random()) for _ in range(12)]
+    mn, mx = min(series), max(series)
+    rng = (mx - mn) or 1.0
+    idxs = [int((x-mn)/rng* (len(SPARK_BLOCKS)-1)) for x in series]
+    return ''.join(SPARK_BLOCKS[i] for i in idxs)
+
+# Decide node color based on variance vs base
+def color_for(name: str, now: float, base_val: float):
+    if base_val is None:
+        return '#9ca3af'  # neutral grey
+    diff = now - base_val
+    better = diff < 0 if name in PREFER_LOWER else diff > 0
+    if abs(diff) < (abs(base_val)+1e-6)*0.005:  # within 0.5%
+        return '#9ca3af'  # neutral
+    return '#10b981' if better else '#ef4444'  # green or red
+
+# Format value at top, then bold name (units) on same line, then variances, then sparkline
+def label_for(name: str, val: float):
+    unit = UNITS.get(name, '')
+    if unit == '%':
+        v_str = f"{val*100:.1f}%"
+    elif unit in ('A$', ''):
+        v_str = f"{val:,.0f}{' A$' if unit=='A$' else ''}"
+    else:
+        v_str = f"{val:,.0f} {unit}"
+
+    b = base.get(name) if base else None
+    abs_var = (val - b) if b is not None else 0.0
+    pct_var = (abs_var / (abs(b)+1e-9)) if b not in (None, 0) else 0.0
+    var_str = f"Δ {abs_var:,.0f} ({pct_var*100:.1f}%)" if base else ""
+
+    # Largest value first line, then bold name with units in brackets
+    title = f"<b>{name}</b> ({unit})" if unit else f"<b>{name}</b>"
+    spark = sparkline_for(val)
+    return f"{v_str}
+{title}
+{var_str}
+{spark}"
+
+############################
+# Inline Tree with streamlit-agraph (Right→Left)
+############################
+from streamlit_agraph import agraph, Node, Edge, Config
+
+# Build nodes with fixed positions (spacious, RL: outcomes left)
+nodes = []
+edges = []
+
+# X coordinates: lower = more to the left (FCF at x=0), move drivers to the right
+# Y coordinates: stack groups vertically with spacing
+X = {
+    'FCF': 0,
+    'EBITDA': 200, 'Taxes': 200, 'Capex': 200, 'ΔNWC': 200, 'Interest': 200,
+    'Revenue': 400, 'GM%': 400, 'Labour': 400, 'Overheads': 400,
+    'Inventory': 400, 'Receivables': 400, 'Payables': 400, 'Avg Debt': 400,
+    'Units': 600, 'ASP': 600, 'COGS': 600, 'Inventory Days': 600, 'DSO': 600, 'DPO': 600,
+}
+Y = {
+    'FCF': 0,
+    'EBITDA': -180, 'Taxes': -20, 'Capex': 140, 'ΔNWC': 300, 'Interest': 460,
+    'Revenue': -260, 'GM%': -100, 'Labour': 40, 'Overheads': 180,
+    'Inventory': 220, 'Receivables': 340, 'Payables': 460, 'Avg Debt': 580,
+    'Units': -300, 'ASP': -180, 'COGS': 40, 'Inventory Days': 220, 'DSO': 340, 'DPO': 460,
+}
+
+KEYS = ['Units','ASP','Revenue','GM%','COGS','Labour','Overheads','EBITDA','Inventory Days','DSO','DPO','Inventory','Receivables','Payables','ΔNWC','Avg Debt','Interest','Taxes','Capex','FCF']
+
+for k in KEYS:
+    val = metrics_now['GM%'] if k=='GM%' else metrics_now.get(k, 0)
+    base_val = base['GM%'] if k=='GM%' else base.get(k) if base else None
+    nodes.append(Node(
+        id=k,
+        label=label_for(k, val),
+        title=k,
+        shape='box',
+        font={'multi':'html','size':16,'color':'#111827'}, # black text
+        color={'border': color_for(k, val, base_val), 'background': '#ffffff'},
+        x=X.get(k, 800), y=Y.get(k, 0),
+        fixed=True,
+        shadow=True,
+        borderWidth=2,
+        margin=12
+    ))
+
+# Edges with formula annotations
+def add_edge(a,b,label):
+    edges.append(Edge(source=a, target=b, arrows='to', label=label, smooth=False))
+
+add_edge('EBITDA','FCF','EBITDA → FCF')
+add_edge('Taxes','FCF','- Taxes')
+add_edge('Capex','FCF','- Capex')
+add_edge('ΔNWC','FCF','- ΔNWC')
+add_edge('Interest','FCF','- Interest')
+
+add_edge('Revenue','EBITDA','Revenue × GM% − Labour − Overheads')
+add_edge('GM%','EBITDA','')
+add_edge('Labour','EBITDA','')
+add_edge('Overheads','EBITDA','')
+
+add_edge('Units','Revenue','Units × ASP')
+add_edge('ASP','Revenue','')
+
+add_edge('Revenue','COGS','COGS = Revenue × (1−GM%) × FX')
+add_edge('GM%','COGS','')
+
+add_edge('COGS','Inventory','Inventory = COGS × InvDays/365')
+add_edge('Inventory Days','Inventory','')
+
+add_edge('Revenue','Receivables','Receivables = Revenue × DSO/365')
+add_edge('DSO','Receivables','')
+
+add_edge('COGS','Payables','Payables = COGS × DPO/365')
+add_edge('DPO','Payables','')
+
+add_edge('Inventory','ΔNWC','ΔNWC = Δ(Inv+AR−AP)')
+add_edge('Receivables','ΔNWC','')
+add_edge('Payables','ΔNWC','')
+
+add_edge('ΔNWC','Avg Debt','Avg Debt ≈ (NWC_prev+NWC_now)/2')
+add_edge('Avg Debt','Interest','Interest = AvgDebt × r / 12')
+
+config = Config(
+    width=1500, height=820, directed=True, physics=False,
+    hierarchical=True, hierarchical_direction='RL',
+    hierarchical_level_separation=200, hierarchical_node_spacing=140, hierarchical_tree_spacing=220
+)
+
+selected = agraph(nodes=nodes, edges=edges, config=config)
+
+# Right-hand details drawer mimic
+with st.expander("Selected node details", expanded=True):
+    node_id = selected if isinstance(selected, str) else None
+    if node_id and node_id in metrics_now:
+        st.markdown(f"### {node_id}")
+        v = metrics_now[node_id]
+        b = base.get(node_id) if base else None
+        unit = UNITS.get(node_id,'')
+        if unit == '%':
+            st.write(f"Value: **{v*100:.1f}%**  |  Base: {'' if b is None else f'{b*100:.1f}%'}")
         else:
-            v = f"{val:,.{precision}f}" if precision else f"{val:,.0f}"
-        label = f"{title}\n{v}{'' if unit=='%' else (' ' + unit if unit else '')}"
-        nodes.append(Node(id=id, label=label, shape="box", 
-                          font={"multi":"html","size":14},
-                          borderWidth=1, shadow=True))
-
-    def E(a,b):
-        edges.append(Edge(source=a, target=b, smooth=True, arrows="to"))
-
-    # Nodes
-    N('Units', 'Units', units, unit="")
-    N('ASP', 'ASP', asp)
-    N('Revenue', 'Revenue', revenue)
-    N('GM', 'Gross Margin %', gm_pct, unit='%')
-    N('COGS', 'COGS (FX Adj)', cogs)
-    N('Labour', 'Labour', labour)
-    N('Overheads', 'Overheads', overheads)
-    N('EBITDA', 'EBITDA', ebitda)
-    N('InvDays', 'Inventory Days', inv_days, unit="days")
-    N('DSO', 'DSO', dso, unit="days")
-    N('DPO', 'DPO', dpo, unit="days")
-    N('Inventory', 'Inventory', inventory)
-    N('Receivables', 'Receivables', receivables)
-    N('Payables', 'Payables', payables)
-    N('DeltaNWC', 'ΔNWC', change_nwc)
-    N('AvgDebt', 'Avg Debt', avg_debt)
-    N('Interest', 'Interest', interest)
-    N('Taxes', 'Taxes', taxes)
-    N('Capex', 'Capex', capex)
-    N('FCF', 'Free Cash Flow', fcf)
-
-    # Edges
-    E('Units','Revenue'); E('ASP','Revenue')
-    E('Revenue','COGS'); E('GM','COGS')
-    E('Revenue','EBITDA'); E('GM','EBITDA'); E('Labour','EBITDA'); E('Overheads','EBITDA')
-    E('COGS','Inventory'); E('InvDays','Inventory')
-    E('Revenue','Receivables'); E('DSO','Receivables')
-    E('COGS','Payables'); E('DPO','Payables')
-    E('Inventory','DeltaNWC'); E('Receivables','DeltaNWC'); E('Payables','DeltaNWC')
-    E('DeltaNWC','AvgDebt'); E('AvgDebt','Interest')
-    E('EBITDA','FCF'); E('Taxes','FCF'); E('Capex','FCF'); E('DeltaNWC','FCF'); E('Interest','FCF')
-
-    config = Config(width=1200, height=700, directed=True, physics=True,
-                    hierarchical=True,
-                    hierarchical_sort_method='directed',
-                    hierarchical_enabled=True,
-                    hierarchical_level_separation=140,
-                    hierarchical_node_spacing=110,
-                    hierarchical_tree_spacing=160)
-
-    agraph(nodes=nodes, edges=edges, config=config)
+            st.write(f"Value: **{v:,.0f} {unit}**  |  Base: {'' if b is None else f'{b:,.0f} {unit}' }")
+        if b is not None:
+            abs_var = v - b
+            pct_var = (abs_var/(abs(b)+1e-9))*100 if b else 0.0
+            st.write(f"Variance vs Base: **{abs_var:,.0f} {unit} ({pct_var:.1f}%)**")
+        st.write("Sparkline (mock last 12m): ")
+        st.code(sparkline_for(v))
+    else:
+        st.write("Click any node to focus and see its details here.")
 
 ############################
 # 6) Dataframe Summary     #
@@ -201,4 +327,4 @@ summary = pd.DataFrame({
 })
 st.dataframe(summary, hide_index=True, use_container_width=True)
 
-st.success("POC ready. Adjust assumptions in the sidebar to see the tree and FCF update in real time.")
+st.success("Inline tree ready: right→left flow, spacious cards, base vs scenario variances, colored accents, formulas on edges. Use the button above to capture a BASE case.")
