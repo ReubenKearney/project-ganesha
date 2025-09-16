@@ -1,19 +1,11 @@
-Interactive inputs (units, ASP, GM%, FX multiplier on purchases, labour, overheads, DSO/DPO/Inventory Days, tax rate, capex, prev-month WC balances, interest rate).
+# Streamlit App
 
-Live calculations:
+A Streamlit app deployed from this GitHub repository.
 
-Revenue, COGS (with FX adjustment), EBITDA.
+## Features
+- Streamlit UI scaffold with sidebar navigation
+- Config pattern supporting both local `.env` and Streamlit Cloud `st.secrets`
+- Structured placeholders for pages/components
+- Basic telemetry-free setup
 
-Inventory / Receivables / Payables and ΔNWC (vs previous month).
-
-Average debt ≈ NWC funding (simple POC), monthly interest from annual rate.
-
-Taxes (on positive EBITDA), FCF = EBITDA – Taxes – Capex – ΔNWC – Interest.
-
-Visuals:
-
-Compact “driver cards” in the left column.
-
-A value-driver tree on the right using Graphviz (boxes with bold titles/values and dependency arrows).
-
-A summary table for quick export/inspection
+## Project Structure
