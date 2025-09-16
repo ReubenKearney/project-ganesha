@@ -85,7 +85,7 @@ def color_for_delta(metric: str, base: float, scen: float, tol: float = 0.1) -> 
 def pp_change(base_pp: float, scen_pp: float) -> float:
     return (scen_pp - base_pp) * 100.0
     
-    def demo_cohorts() -> pd.DataFrame:
+def demo_cohorts() -> pd.DataFrame:
     return pd.DataFrame({
         "segment_id": ["Core", "Value", "Premium"],
         "customers": [2000, 3000, 500],
