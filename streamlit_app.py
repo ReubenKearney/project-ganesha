@@ -400,6 +400,30 @@ with st.sidebar:
             st.error(f"Could not read CSV: {e}")
 
 
+# ---------- Data preparation & Tabs ----------
+# Prefer uploaded cohorts; fallback to demo
+_df_from_session = st.session_state.get("uploaded_cohorts")
+df_in = _df_from_session if _df_from_session is not None else demo_cohorts()
+
+# Ensure baseline price column and set base price into working 'price'
+if "base_price" not in df_in.columns:
+    st.error("Input cohorts missing required column 'base_price'. Upload a CSV with this column or use the demo data.")
+else:
+    df_in = df_in.copy()
+    df_in["price"] = df_in["base_price"]
+
+# Apply current scenario to cohorts
+df_adj = df_in.apply(lambda r: apply_scenario_to_segment(r, sc, el), axis=1)
+
+# Compute Base vs Scenario tables
+base_table = compute_nltv_table(df_in, fin)
+scen_table = compute_nltv_table(df_adj, fin)
+
+# Create tabs (referenced below)
+tab_overview, tab_scenarios, tab_sensitivity, tab_cohorts, tab_export = st.tabs(
+    ["Overview", "Scenarios", "Sensitivity", "Cohorts", "Export"]
+)
+
 with tab_overview:
     c1, c2, c3 = st.columns([1,1,1])
     with c1:
