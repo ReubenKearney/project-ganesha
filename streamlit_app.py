@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 import streamlit as st
+from graphviz import Digraph
 
 # ---------- Defaults & Types ----------
 
@@ -46,7 +47,45 @@ class Scenario:
 
 # ---------- Data Utilities ----------
 
-def demo_cohorts() -> pd.DataFrame:
+HIGHER_IS_BETTER = {
+    "price": True,
+    "purchase_frequency": True,
+    "units_per_purchase": True,
+    "gross_margin_pct": True,
+    "var_service_cost_pct": False,
+    "fixed_service_cost": False,
+    "cross_sell_rev": True,
+    "cac": False,
+    "overhead_per_customer": False,
+    "churn_pct": False,
+    "NLTV": True,
+}
+
+def pct_change(base: float, scen: float) -> float:
+    if base == 0:
+        return float("inf") if scen != 0 else 0.0
+    return (scen - base) / abs(base) * 100.0
+
+def color_for_delta(metric: str, base: float, scen: float, tol: float = 0.1) -> str:
+    """
+    Returns a hex colour for node fill:
+    - green if improved, red if worse, grey if ~no change.
+    tol: percent-change threshold for 'neutral'
+    """
+    change = pct_change(base, scen)
+    better_if_up = HIGHER_IS_BETTER.get(metric, True)
+    improved = (change > tol and better_if_up) or (change < -tol and not better_if_up)
+    worse = (change < -tol and better_if_up) or (change > tol and not better_if_up)
+    if improved:
+        return "#c6f6d5"   # green-100
+    if worse:
+        return "#fed7d7"   # red-100
+    return "#e2e8f0"       # slate-200
+
+def pp_change(base_pp: float, scen_pp: float) -> float:
+    return (scen_pp - base_pp) * 100.0
+    
+    def demo_cohorts() -> pd.DataFrame:
     return pd.DataFrame({
         "segment_id": ["Core", "Value", "Premium"],
         "customers": [2000, 3000, 500],
@@ -137,6 +176,86 @@ def compute_nltv_table(df: pd.DataFrame, fin: Finance) -> pd.DataFrame:
     df["NLTV"] = df["CLV"] - df["cac"] - df["retention_cost"] - df["overhead_per_customer"]
     df["Total_NLTV"] = df["NLTV"] * df["customers"]
     return df
+
+def build_vdt_graph(base_row: pd.Series, scen_row: pd.Series, base_nltv: float, scen_nltv: float) -> Digraph:
+    """
+    base_row/scen_row: single segment row with applied values (i.e., post-scenario for scen_row).
+    base_nltv/scen_nltv: NLTV per-customer for this segment, not total.
+    """
+    g = Digraph("VDT", graph_attr={"rankdir": "TB", "splines": "ortho"}, node_attr={"shape":"box", "style":"filled,rounded", "fontname":"Helvetica", "fontsize":"10"})
+    # Root
+    root_color = color_for_delta("NLTV", base_nltv, scen_nltv)
+    root_label = f"NLTV per customer\nBase: ${base_nltv:,.2f}\nScen: ${scen_nltv:,.2f}\nΔ: ${scen_nltv-base_nltv:,.2f}"
+    g.node("NLTV", root_label, fillcolor=root_color)
+
+    # Revenue branch
+    base_arpu = base_row["base_price"] * base_row["units_per_purchase"] * base_row["purchase_frequency"] + base_row["cross_sell_rev"]
+    scen_arpu = scen_row["price"] * scen_row["units_per_purchase"] * scen_row["purchase_frequency"] + scen_row["cross_sell_rev"]
+    rev_color = color_for_delta("price", base_arpu, scen_arpu)  # use same rule (higher better)
+    g.node("REV", f"Revenue / period (ARPU)\nBase: {base_arpu:,.2f}\nScen: {scen_arpu:,.2f}\nΔ%: {pct_change(base_arpu, scen_arpu):.1f}%", fillcolor=rev_color)
+    g.edge("REV", "NLTV")
+
+    # Cost branch
+    base_var_cost_pct = base_row["var_service_cost_pct"]
+    scen_var_cost_pct = scen_row["var_service_cost_pct"]
+    base_fixed_cost = base_row["fixed_service_cost"]
+    scen_fixed_cost = scen_row["fixed_service_cost"]
+
+    # Gross margin %
+    base_margin = base_row["gross_margin_pct"]
+    scen_margin = scen_row["gross_margin_pct"]
+    gm_color = color_for_delta("gross_margin_pct", base_margin, scen_margin)
+    g.node("GM", f"Gross margin %\nBase: {base_margin*100:.1f}%\nScen: {scen_margin*100:.1f}%\nΔpp: {pp_change(base_margin, scen_margin):.2f}", fillcolor=gm_color)
+    g.edge("GM", "REV", label="mix/price impact")
+
+    # Price / Frequency / Basket / Cross-sell
+    for key, code, label in [
+        ("price", "P", "Price"),
+        ("purchase_frequency", "F", "Purchase freq"),
+        ("units_per_purchase", "U", "Basket size"),
+        ("cross_sell_rev", "X", "Cross-sell (abs)"),
+    ]:
+        b = base_row["base_price"] if key=="price" else base_row[key]
+        s = scen_row["price"] if key=="price" else scen_row[key]
+        col = color_for_delta(key, b, s)
+        if key == "cross_sell_rev":
+            lbl = f"{label}\nBase: {b:,.2f}\nScen: {s:,.2f}\nΔ%: {pct_change(b,s):.1f}%"
+        else:
+            lbl = f"{label}\nBase: {b:,.3g}\nScen: {s:,.3g}\nΔ%: {pct_change(b,s):.1f}%"
+        g.node(code, lbl, fillcolor=col)
+        g.edge(code, "REV")
+
+    # Service costs
+    vc_col = color_for_delta("var_service_cost_pct", base_var_cost_pct, scen_var_cost_pct)
+    g.node("VC", f"Variable service cost %\nBase: {base_var_cost_pct*100:.1f}%\nScen: {scen_var_cost_pct*100:.1f}%\nΔpp: {pp_change(base_var_cost_pct, scen_var_cost_pct):.2f}", fillcolor=vc_col)
+
+    fc_col = color_for_delta("fixed_service_cost", base_fixed_cost, scen_fixed_cost)
+    g.node("FC", f"Fixed service cost / period\nBase: {base_fixed_cost:,.2f}\nScen: {scen_fixed_cost:,.2f}\nΔ%: {pct_change(base_fixed_cost, scen_fixed_cost):.1f}%", fillcolor=fc_col)
+
+    g.edge("VC", "NLTV", label="service var")
+    g.edge("FC", "NLTV", label="service fixed")
+
+    # Churn / Retention path
+    base_churn = base_row["churn_pct"]
+    scen_churn = scen_row["churn_pct"]
+    churn_col = color_for_delta("churn_pct", base_churn, scen_churn)
+    g.node("CHURN", f"Churn (monthly)\nBase: {base_churn*100:.2f}%\nScen: {scen_churn*100:.2f}%\nΔpp: {pp_change(base_churn, scen_churn):.2f}", fillcolor=churn_col)
+    g.edge("CHURN", "NLTV", label="survival")
+
+    # CAC / Overheads / Retention cost
+    for key, code, label in [
+        ("cac", "CAC", "CAC"),
+        ("overhead_per_customer", "OH", "Overhead / cust"),
+        ("retention_cost", "RET", "Retention cost"),
+    ]:
+        b = base_row[key]
+        s = scen_row[key]
+        col = color_for_delta(key, b, s)
+        g.node(code, f"{label}\nBase: {b:,.2f}\nScen: {s:,.2f}\nΔ%: {pct_change(b,s):.1f}%", fillcolor=col)
+        g.edge(code, "NLTV", label="deduction")
+
+    return g
+
 
 def tornado_sensitivity(base_df: pd.DataFrame, fin: Finance, row: pd.Series, step_pct: float = 10.0) -> pd.DataFrame:
     # One segment tornado around base: vary each driver ±step_pct
@@ -252,6 +371,17 @@ with tab_overview:
         on=merge_cols, suffixes=(" Base", f" {sc.name}")
     )
     st.dataframe(comp, use_container_width=True)
+
+    st.subheader("Value Driver Tree")
+    seg_for_vdt = st.selectbox("VDT segment", df_in["segment_id"].tolist(), index=0, key="vdt_seg")
+    base_row = df_in[df_in["segment_id"] == seg_for_vdt].iloc[0]
+    scen_row = df_adj[df_adj["segment_id"] == seg_for_vdt].iloc[0]
+
+    base_one = compute_nltv_table(pd.DataFrame([base_row]), fin)["NLTV"].iloc[0]
+    scen_one = compute_nltv_table(pd.DataFrame([scen_row]), fin)["NLTV"].iloc[0]
+
+    vdt = build_vdt_graph(base_row, scen_row, base_one, scen_one)
+    st.graphviz_chart(vdt)
 
 with tab_scenarios:
     st.subheader("Saved scenarios")
