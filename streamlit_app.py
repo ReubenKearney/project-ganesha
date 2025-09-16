@@ -297,63 +297,108 @@ st.title("NLTV Value Driver Tree — Scenario Analysis")
 if "scenarios" not in st.session_state:
     st.session_state.scenarios: Dict[str, Scenario] = {}
 
-# Sidebar: Finance and elasticities
+# ---------------- Sidebar (reordered + explanations) ----------------
 with st.sidebar:
+    # 1) Scenario controls first
+    st.header("Scenario controls")
+    sc_name = st.text_input("Scenario name", "Case 1")
+    sc = Scenario(
+        name=sc_name,
+        price_delta_pct=st.number_input("Increase prices (%)", -50.0, 200.0, 0.0, step=1.0,
+                                        help="Applies a uniform % change to average price per unit."),
+        purchase_freq_delta_pct=st.number_input("Increase purchase frequency (%)", -50.0, 200.0, 0.0, step=1.0,
+                                                help="Changes how often an average customer purchases each period."),
+        basket_delta_pct=st.number_input("Sell more (basket size, %)", -50.0, 200.0, 0.0, step=1.0,
+                                         help="Changes units per purchase (average items per transaction)."),
+        margin_mix_delta_pp=st.number_input("Sell better (margin mix, pp)", -50.0, 50.0, 0.0, step=0.5,
+                                            help="Shifts product mix. Positive = higher gross margin percentage (percentage points)."),
+        var_cost_delta_pp=st.number_input("Decrease costs (variable service cost, pp)", -50.0, 50.0, 0.0, step=0.5,
+                                          help="Changes variable service cost as % of revenue (percentage points). Lower is better."),
+        fixed_cost_delta_abs=st.number_input("Decrease costs (fixed per customer, $)", -10.0, 10.0, 0.0, step=0.1,
+                                             help="Absolute change to fixed service cost per customer per period."),
+        cross_sell_delta_pct=st.number_input("Cross-sell (%)", -100.0, 500.0, 0.0, step=1.0,
+                                             help="Percent change to cross-sell revenue per customer per period."),
+        cac_delta_pct=st.number_input("CAC change (%)", -100.0, 200.0, 0.0, step=1.0,
+                                      help="Percent change to customer acquisition cost (CAC)."),
+        overhead_delta_pct=st.number_input("Overheads change (%)", -100.0, 200.0, 0.0, step=1.0,
+                                           help="Percent change to overhead per customer."),
+        apply_price_elasticity=st.checkbox("Apply price elasticities", True,
+                                           help="When ON, price changes can alter purchase frequency and churn according to the elasticities below."),
+        apply_service_elasticity=st.checkbox("Apply service elasticities", True,
+                                             help="When ON, worsening service (proxied by higher variable service cost %) can increase churn."),
+        apply_crosssell_elasticity=st.checkbox("Apply cross-sell elasticities", True,
+                                               help="When ON, higher cross-sell revenue can improve retention (reduce churn) if elasticity is negative."),
+    )
+
+    col_save, col_load = st.columns(2)
+    with col_save:
+        if st.button("Save scenario"):
+            st.session_state.scenarios[sc.name] = sc
+    with col_load:
+        if st.button("Clear scenarios"):
+            st.session_state.scenarios = {}
+
+    st.divider()
+
+    # 2) Elasticities (with plain-English explanations)
+    st.header("Elasticities (behavioural)")
+    st.caption("These settings control how customers react when you change levers. Values are applied per +10% change in the lever, and expressed in either percentage points (pp) or % multipliers as noted.")
+
+    el = Elasticities(
+        price_to_freq_elast=st.number_input(
+            "Price → Frequency elasticity (per +10% price)",
+            -2.0, 2.0, -0.3, step=0.1,
+            help="Effect on purchase frequency for each +10% price increase. "
+                 "Value = -0.3 means frequency falls ~3% when price rises 10%."
+        ),
+        price_to_churn_pp_per_10pct=st.number_input(
+            "Price → Churn (pp per +10% price)",
+            -2.0, 2.0, 0.4, step=0.1,
+            help="Change in churn (percentage points) for each +10% price increase. "
+                 "Value = 0.4 means churn rises by 0.4pp when price rises 10%."
+        ),
+        service_to_churn_pp_per_10pct=st.number_input(
+            "Service quality → Churn (pp per +10% worse)",
+            -2.0, 2.0, 0.3, step=0.1,
+            help="Change in churn (percentage points) when service quality worsens by 10%. "
+                 "In this model, a higher variable service cost % is used as a proxy for worse service. "
+                 "Value = 0.3 means churn rises by 0.3pp when service worsens 10%."
+        ),
+        crosssell_to_churn_pp_per_10pct=st.number_input(
+            "Cross-sell → Churn (pp per +10% cross-sell)",
+            -2.0, 2.0, -0.1, step=0.1,
+            help="Change in churn (percentage points) for each +10% increase in cross-sell revenue. "
+                 "Negative values imply better engagement lowers churn. "
+                 "Value = -0.1 means churn falls by 0.1pp when cross-sell rises 10%."
+        ),
+    )
+
+    st.divider()
+
+    # 3) Finance next
     st.header("Finance")
     fin = Finance(
-        discount_rate_annual=st.number_input("Discount rate (annual)", 0.0, 1.0, 0.10, step=0.01),
-        horizon_periods=st.number_input("Horizon (months)", 1, 240, 60, step=1),
+        discount_rate_annual=st.number_input("Discount rate (annual)", 0.0, 1.0, 0.10, step=0.01,
+                                             help="Annual discount rate used to present-value future contributions."),
+        horizon_periods=st.number_input("Horizon (months)", 1, 240, 60, step=1,
+                                        help="Number of monthly periods over which CLV is simulated."),
         periods_per_year=PERIODS_PER_YEAR,
     )
-    st.header("Elasticities")
-    el = Elasticities(
-        price_to_freq_elast=st.number_input("Price → Frequency elasticity per +10% (e.g., -0.3)", -2.0, 2.0, -0.3, step=0.1),
-        price_to_churn_pp_per_10pct=st.number_input("Price → Churn (pp per +10%)", -2.0, 2.0, 0.4, step=0.1),
-        service_to_churn_pp_per_10pct=st.number_input("Service → Churn (pp per +10% worse)", -2.0, 2.0, 0.3, step=0.1),
-        crosssell_to_churn_pp_per_10pct=st.number_input("Cross-sell → Churn (pp per +10%)", -2.0, 2.0, -0.1, step=0.1),
-    )
 
-df_in = load_cohorts()
-# Prepare base columns for scenario application
-df_in = df_in.rename(columns={"base_price": "base_price"})
-df_in["price"] = df_in["base_price"]  # base
+    st.divider()
 
-# Scenario builder
-st.sidebar.header("Scenario Controls")
-sc_name = st.sidebar.text_input("Scenario name", "Case 1")
-sc = Scenario(
-    name=sc_name,
-    price_delta_pct=st.sidebar.number_input("Increase prices (%)", -50.0, 200.0, 0.0, step=1.0),
-    purchase_freq_delta_pct=st.sidebar.number_input("Increase purchase frequency (%)", -50.0, 200.0, 0.0, step=1.0),
-    basket_delta_pct=st.sidebar.number_input("Sell more (basket size, %)", -50.0, 200.0, 0.0, step=1.0),
-    margin_mix_delta_pp=st.sidebar.number_input("Sell better (margin mix, pp)", -50.0, 50.0, 0.0, step=0.5),
-    var_cost_delta_pp=st.sidebar.number_input("Decrease costs (variable service cost, pp)", -50.0, 50.0, 0.0, step=0.5),
-    fixed_cost_delta_abs=st.sidebar.number_input("Decrease costs (fixed per cust, abs)", -10.0, 10.0, 0.0, step=0.1),
-    cross_sell_delta_pct=st.sidebar.number_input("Cross-sell (%)", -100.0, 500.0, 0.0, step=1.0),
-    cac_delta_pct=st.sidebar.number_input("CAC change (%)", -100.0, 200.0, 0.0, step=1.0),
-    overhead_delta_pct=st.sidebar.number_input("Overheads change (%)", -100.0, 200.0, 0.0, step=1.0),
-    apply_price_elasticity=st.sidebar.checkbox("Apply price elasticities", True),
-    apply_service_elasticity=st.sidebar.checkbox("Apply service elasticities", True),
-    apply_crosssell_elasticity=st.sidebar.checkbox("Apply cross-sell elasticities", True),
-)
+    # 4) Data last (upload/diagnostics)
+    st.header("Data")
+    st.caption("Upload a cohort CSV to replace the demo data.")
+    up = st.file_uploader("Cohort CSV", type=["csv"])
+    if up is not None:
+        try:
+            df_uploaded = pd.read_csv(up)
+            st.session_state["uploaded_cohorts"] = df_uploaded
+            st.success("Cohorts loaded.")
+        except Exception as e:
+            st.error(f"Could not read CSV: {e}")
 
-col_save, col_load = st.sidebar.columns(2)
-with col_save:
-    if st.button("Save scenario"):
-        st.session_state.scenarios[sc.name] = sc
-with col_load:
-    if st.button("Clear scenarios"):
-        st.session_state.scenarios = {}
-
-# Apply scenario
-df_adj = df_in.apply(lambda r: apply_scenario_to_segment(r, sc, el), axis=1)
-base_table = compute_nltv_table(df_in, fin)
-scen_table = compute_nltv_table(df_adj, fin)
-
-# Layout
-tab_overview, tab_scenarios, tab_sensitivity, tab_cohorts, tab_export = st.tabs(
-    ["Overview", "Scenarios", "Sensitivity", "Cohorts", "Export"]
-)
 
 with tab_overview:
     c1, c2, c3 = st.columns([1,1,1])
