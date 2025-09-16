@@ -285,7 +285,7 @@ def tornado_sensitivity(base_df: pd.DataFrame, fin: Finance, row: pd.Series, ste
     out = pd.DataFrame(records)
     # Convert to deltas vs base
     out["ΔNLTV"] = out["NLTV"] - float(base_row["NLTV_base"])
-    return out.sort_values(["Driver", "ΔNLTV"])
+    return out.sort_values(["Driver", "ΔNLTV"]) 
 
 # ---------- Streamlit UI ----------
 
