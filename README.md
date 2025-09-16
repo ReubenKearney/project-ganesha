@@ -9,3 +9,7 @@ A Streamlit app deployed from this GitHub repository.
 - Basic telemetry-free setup
 
 ## Project Structure
+.
+├── README.md
+├── requirements.txt
+└── streamlit_app.py
